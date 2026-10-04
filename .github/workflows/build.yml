@@ -154,22 +154,22 @@ jobs:
           cd openwrt
 
           # 必须放进 package/（SDK 内置包路径），不能用 feeds 机制。
-          # feeds 依赖 feeds.conf 里的 git 源声明 + ./scripts/feeds update <name>，
-          # 本地目录无法作为 feed 源；硬塞到 package/feeds/ 会导致
-          # "feeds update: command: I/O error"，进而 install 装不上，
-          # 最终报 "No rule to make target package/xxx/compile"。
+          # feeds 依赖 feeds.conf 里的 git 源声明，本地目录无法作为
+          # feed 源；硬塞到 package/feeds/ 再跑 feeds update 会报
+          # "command: I/O error"，install 装不上任何包，最终
+          # "No rule to make target package/xxx/compile"。
           rm -rf package/luci-app-wloc package/luci-app-wloc-mitm
 
           # ---- 界面包 ----
-          # luci.mk 会自动打包 CURDIR 下的 htdocs/ luasrc/ root/，
-          # 因此这些目录必须与 Makefile 同级。
-          # 注意：仓库里 luci/ 只有 Makefile（feeds 场景下由 luci.mk
-          # 从 luci/ 读取其余路径），直接 cp 会得到一个空壳包。
+          # luci.mk 从 CURDIR 读取 htdocs/ luasrc/ root/，并按目录名
+          # 推导包名。本仓库 luci/ 下只有 Makefile，其余资源在根目录，
+          # 因此必须逐项复制，否则得到只含 Makefile 的空壳包
+          # （能编译能安装，但界面完全空白）。
           mkdir -p package/luci-app-wloc
-          cp "$GITHUB_WORKSPACE/luci/Makefile"  package/luci-app-wloc/
-          cp -r "$GITHUB_WORKSPACE/htdocs"       package/luci-app-wloc/
-          cp -r "$GITHUB_WORKSPACE/luasrc"       package/luci-app-wloc/
-          [ -d "$GITHUB_WORKSPACE/root" ] && cp -r "$GITHUB_WORKSPACE/root" package/luci-app-wloc/ || true
+          cp "$GITHUB_WORKSPACE/luci/Makefile" package/luci-app-wloc/
+          cp -r "$GITHUB_WORKSPACE/htdocs"      package/luci-app-wloc/
+          cp -r "$GITHUB_WORKSPACE/luasrc"      package/luci-app-wloc/
+          cp -r "$GITHUB_WORKSPACE/root"        package/luci-app-wloc/
 
           # ---- 运行时主包 ----
           mkdir -p package/luci-app-wloc-mitm
@@ -177,29 +177,29 @@ jobs:
           cp "$GITHUB_WORKSPACE/LICENSE"  package/luci-app-wloc-mitm/
           cp -r "$GITHUB_WORKSPACE/root"  package/luci-app-wloc-mitm/
 
-          echo "=== 界面包内容 ==="
+          echo "=== 界面包 ==="
           ls package/luci-app-wloc/
-          echo "=== 主包内容 ==="
+          echo "=== 主包 ==="
           ls package/luci-app-wloc-mitm/
 
           # 逐项校验，缺什么直接点名
-          test -f package/luci-app-wloc/Makefile \
-            || { echo "::error::界面包缺 Makefile"; exit 1; }
-          test -f package/luci-app-wloc/htdocs/luci-static/resources/view/wloc.js \
-            || { echo "::error::界面包缺 htdocs/.../wloc.js"; exit 1; }
-          test -f package/luci-app-wloc/luasrc/controller/wloc.lua \
-            || { echo "::error::界面包缺 luasrc/controller/wloc.lua"; exit 1; }
-          test -f package/luci-app-wloc/root/usr/share/rpcd/acl.d/luci-app-wloc.json \
-            || { echo "::error::界面包缺 rpcd ACL"; exit 1; }
-          test -f package/luci-app-wloc-mitm/Makefile \
-            || { echo "::error::主包缺 Makefile"; exit 1; }
-          test -f package/luci-app-wloc-mitm/root/usr/libexec/wloc/wloc_proto.py \
-            || { echo "::error::主包缺 wloc_proto.py"; exit 1; }
-          test -f package/luci-app-wloc-mitm/root/usr/bin/wloc-ctl \
-            || { echo "::error::主包缺 wloc-ctl"; exit 1; }
-          test -f package/luci-app-wloc-mitm/root/etc/init.d/wloc \
-            || { echo "::error::主包缺 init 脚本"; exit 1; }
-          echo "包文件校验通过"
+          for f in \
+            package/luci-app-wloc/Makefile \
+            package/luci-app-wloc/htdocs/luci-static/resources/view/wloc.js \
+            package/luci-app-wloc/htdocs/luci-static/resources/view/wloc.css \
+            package/luci-app-wloc/luasrc/controller/wloc.lua \
+            package/luci-app-wloc/root/usr/share/rpcd/acl.d/luci-app-wloc.json \
+            package/luci-app-wloc/root/usr/share/luci/menu.d/luci-app-wloc.json \
+            package/luci-app-wloc-mitm/Makefile \
+            package/luci-app-wloc-mitm/root/usr/libexec/wloc/wloc_proto.py \
+            package/luci-app-wloc-mitm/root/usr/libexec/wloc/wloc_addon.py \
+            package/luci-app-wloc-mitm/root/usr/bin/wloc-ctl \
+            package/luci-app-wloc-mitm/root/etc/init.d/wloc \
+            package/luci-app-wloc-mitm/root/etc/config/wloc
+          do
+            [ -f "$f" ] || { echo "::error::缺少 $f"; exit 1; }
+          done
+          echo "包文件校验通过（12 项）"
 
       - name: 安装 LuCI 基础依赖
         run: |
