@@ -260,12 +260,14 @@ Apple/Google/高德/腾讯/纯文本五类链接的坐标提取与坐标系判�
 
 ```
 luci-app-wloc/
-├── Makefile                     主包（运行时）
-├── luci/Makefile                LuCI 界面包
-├── htdocs/                      LuCI 前端资源
+├── Makefile                     主包 luci-app-wloc-mitm（运行时）
+├── luci/
+│   └── Makefile                界面包 luci-app-wloc 的 Makefile
+├── htdocs/                      界面包前端资源
 │   └── luci-static/resources/view/wloc.{js,css}
-├── luasrc/controller/wloc.lua   CA 证书下载路由
-├── root/
+├── luasrc/
+│   └── controller/wloc.lua       界面包：CA 证书下载路由
+├── root/                        两个包共用
 │   ├── etc/config/wloc          UCI 配置
 │   ├── etc/init.d/wloc          procd 服务
 │   ├── usr/bin/wloc-ctl         辅助命令
@@ -273,10 +275,19 @@ luci-app-wloc/
 │   │   ├── wloc_proto.py        protobuf 引擎（纯函数，可单测）
 │   │   └── wloc_addon.py        mitmproxy 插件
 │   └── usr/share/
-│       ├── luci/menu.d/         菜单
+│       ├── luci/menu.d/         菜单定义
 │       └── rpcd/acl.d/          权限
 └── tests/                       测试
 ```
+
+> **注意**：`luci/` 目录下只有 `Makefile`，前端资源在仓库根的 `htdocs/`、
+> `luasrc/`、`root/`。这是 LuCI 的约定——`luci.mk` 从 `CURDIR` 读取
+> `htdocs/`、`luasrc/`、`root/` 并按目录名推导包名。
+>
+> 作为 feed 使用时（本仓库的 CI 即如此），`luci/` 需作为独立目录
+> `src-link` 引入，此时 LuCI 的资源目录要与 `Makefile` 同级。
+> **以 feed 方式引入时需把 `htdocs/`、`luasrc/` 一并放入 feed 目录**，
+> 否则会得到只含 Makefile 的空壳包（编译能过，但装完界面空白）。
 
 ---
 
