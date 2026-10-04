@@ -51,43 +51,44 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 24.10+ 使用 apk 生成 .apk；23.05 及更早使用 opkg 生成 .ipk
+          # SDK 文件名由下载步骤从目录索引动态发现（文件名含 gcc 版本，
+          # 且 24.10+ 用 .tar.zst、23.05- 用 .tar.xz，硬编码必然失效）。
+          #
+          # arch 必须用各版本真实存在的名字。已逐一核对目录确认：
+          #   x86-64              所有版本
+          #   armsr-armv8         23.05 起（22.03 无此 subtarget）
+          #   armvirt-64          仅 22.03（23.05 起改名）
+          #   qualcommax-ipq807x  24.10/25.12（23.05 无 qualcommax 目录）
           - version: '25.12.5'
             arch: x86-64
-            sdk_arch: x86_64
             sdk_subtarget: x86/64
-          - version: '25.12.5'
-            arch: aarch64-generic
-            sdk_arch: aarch64_generic
-            sdk_subtarget: armsr/armv8
           - version: '25.12.5'
             arch: armsr-armv8
-            sdk_arch: armsr_armv8
             sdk_subtarget: armsr/armv8
+          - version: '25.12.5'
+            arch: qualcommax-ipq807x
+            sdk_subtarget: qualcommax/ipq807x
           - version: '24.10.8'
             arch: x86-64
-            sdk_arch: x86_64
             sdk_subtarget: x86/64
           - version: '24.10.8'
-            arch: aarch64-generic
-            sdk_arch: aarch64_generic
+            arch: armsr-armv8
             sdk_subtarget: armsr/armv8
+          - version: '24.10.8'
+            arch: qualcommax-ipq807x
+            sdk_subtarget: qualcommax/ipq807x
           - version: '23.05.6'
             arch: x86-64
-            sdk_arch: x86_64
             sdk_subtarget: x86/64
           - version: '23.05.6'
-            arch: aarch64-generic
-            sdk_arch: aarch64_generic
+            arch: armsr-armv8
             sdk_subtarget: armsr/armv8
           - version: '22.03.7'
             arch: x86-64
-            sdk_arch: x86_64
             sdk_subtarget: x86/64
           - version: '22.03.7'
-            arch: aarch64-generic
-            sdk_arch: aarch64_generic
-            sdk_subtarget: armsr/armv8
+            arch: armvirt-64
+            sdk_subtarget: armvirt/64
 
     steps:
       - uses: actions/checkout@v4
@@ -97,22 +98,49 @@ jobs:
         uses: actions/cache@v4
         with:
           path: openwrt
-          key: sdk-${{ matrix.version }}-${{ matrix.sdk_arch }}
+          # 只按 SDK 坐标做 key——不混入源码 hash，否则改一行代码就重下 1GB SDK
+          key: sdk-${{ matrix.version }}-${{ matrix.arch }}
 
       - name: 下载并解压 SDK
         if: steps.sdk-cache.outputs.cache-hit != 'true'
         env:
           SDK_VERSION: ${{ matrix.version }}
           SDK_SUBTARGET: ${{ matrix.sdk_subtarget }}
-          SDK_ARCH: ${{ matrix.sdk_arch }}
+          SDK_ARCH: ${{ matrix.arch }}
         run: |
           set -eu
-          URL="https://downloads.openwrt.org/releases/${SDK_VERSION}/targets/${SDK_SUBTARGET}/${SDK_ARCH}/openwrt-sdk-${SDK_VERSION}-${SDK_ARCH}-musl.tar.xz"
-          echo "下载 $URL"
-          curl -fsSL --retry 3 -o sdk.tar.xz "$URL"
+
+          BASE="https://downloads.openwrt.org/releases/${SDK_VERSION}/targets/${SDK_SUBTARGET}"
+
+          # SDK 文件名随版本变化很大：
+          #   24.10+ : openwrt-sdk-<ver>-<arch>_gcc-<ver>_musl.Linux-x86_64.tar.zst
+          #   23.05- : openwrt-sdk-<ver>-<arch>_gcc-<ver>_musl.Linux-x86_64.tar.xz
+          # 硬编码必然随 OpenWrt 升级而失效，因此从目录索引中动态发现。
+          NAME="$(curl -fsSL --retry 3 "$BASE/" \
+            | grep -o "openwrt-sdk-[^\"]*\.tar\.\(zst\|xz\)" \
+            | grep -- "-${SDK_ARCH}_" \
+            | head -n1 || true)"
+
+          if [ -z "$NAME" ]; then
+            echo "::error::在 $BASE/ 下未找到 ${SDK_ARCH} 的 SDK 包"
+            echo "可访问 $BASE/ 查看实际文件名"
+            exit 1
+          fi
+
+          URL="$BASE/$NAME"
+          echo "SDK: $NAME"
+          curl -fsSL --retry 3 -o sdk.tar "$URL"
+
           mkdir -p openwrt
-          tar -xJf sdk.tar.xz -C openwrt --strip-components=1
-          rm -f sdk.tar.xz
+          case "$NAME" in
+            *.tar.zst) tar --zstd -xf sdk.tar -C openwrt --strip-components=1 ;;
+            *.tar.xz)  tar -xJf sdk.tar -C openwrt --strip-components=1 ;;
+            *) echo "::error::未知压缩格式: $NAME"; exit 1 ;;
+          esac
+          rm -f sdk.tar
+
+          test -f openwrt/Makefile || { echo "::error::SDK 解压异常"; exit 1; }
+          echo "SDK 就绪: $(cat openwrt/include/version.mk 2>/dev/null | head -n1 || echo ok)"
 
       - name: 更新 feeds
         run: |
