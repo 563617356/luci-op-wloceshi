@@ -330,14 +330,33 @@ jobs:
         if: always()
         run: |
           set -u
-          mkdir -p "$GITHUB_WORKSPACE/artifacts"
-          # ipk 与 apk 一并收集，具体格式体现在文件名里
-          find openwrt/bin -type f \
-            \( -name 'luci-app-wloc_*.ipk' -o -name 'luci-app-wloc_*.apk' \) \
-            -exec cp -v {} "$GITHUB_WORKSPACE/artifacts/" \; 2>/dev/null || true
+          OUT="$GITHUB_WORKSPACE/artifacts"
+          rm -rf "$OUT"; mkdir -p "$OUT"
+
+          # 两个包的产物都要收。ipk 形如 luci-app-wloc_1.0.0-1_all.ipk，
+          # apk 形如 luci-app-wloc-1.0.0-r1.apk（无下划线分版本），
+          # 所以两个模式都要匹配，否则 apk 会被漏掉。
+          #
+          # 关键：加架构后缀。Release 用 merge-multiple 把各架构 artifact
+          # 合并到同一目录，同名文件会互相覆盖——10 个架构最终只剩 1 份。
+          VER="${{ matrix.version }}"
+          ARCH_NAME=$(echo "${{ matrix.arch }}" | tr '/' '-')
+          for f in $(find openwrt/bin -type f \
+              \( -name 'luci-app-wloc*.ipk' -o -name 'luci-app-wloc*.apk' \) 2>/dev/null); do
+            base=$(basename "$f")
+            # luci-app-wloc_1.0.0-1_all.ipk -> luci-app-wloc_1.0.0-1_all_<ver>_<arch>.ipk
+            ext="${base##*.}"
+            stem="${base%.*}"
+            cp "$f" "$OUT/${stem}_${VER}_${ARCH_NAME}.${ext}"
+            echo "  $(basename "$f") -> ${stem}_${VER}_${ARCH_NAME}.${ext}"
+          done
+
           echo
           echo "=== 产物 ==="
-          ls -la "$GITHUB_WORKSPACE/artifacts/" 2>/dev/null || echo "  无产物"
+          ls -la "$OUT" || echo "  无产物"
+          n=$(ls -1 "$OUT" 2>/dev/null | wc -l)
+          echo "共 $n 个"
+          [ "$n" -ge 2 ] || echo "::warning::产物少于 2 个，可能有包未编译"
 
       - name: 诊断
         if: always()
@@ -396,11 +415,19 @@ jobs:
       - name: 无产物则中止发布
         run: |
           set -eu
-          if [ -z "$(ls -A artifacts/ 2>/dev/null)" ]; then
+          N=$(ls -1 artifacts/ 2>/dev/null | wc -l)
+          echo "合并后产物数: $N"
+          ls -la artifacts/
+          if [ "$N" -eq 0 ]; then
             echo "::error::没有任何产物，跳过发布"
             exit 1
           fi
-          echo "产物数: $(ls -1 artifacts/ | wc -l)"
+          # 10 个架构 × 2 个包 = 20 个文件。全失败时会远少于这个数，
+          # 给出警告但不阻断（部分架构可用仍有价值）。
+          if [ "$N" -lt 10 ]; then
+            echo "::warning::产物仅 $N 个，预期约 20 个（10 架构 × 2 包）"
+            echo "::warning::可能有架构构建失败或文件名冲突导致覆盖"
+          fi
 
       - uses: softprops/action-gh-release@v2
         with:
