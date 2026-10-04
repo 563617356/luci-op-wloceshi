@@ -148,69 +148,69 @@ jobs:
           cd openwrt
           ./scripts/feeds update -a
 
-      - name: 接入本仓库为内置包
+      - name: 接入本仓库为本地 feed
         run: |
           set -eu
-          cd openwrt
 
-          # 必须放进 package/（SDK 内置包路径），不能用 feeds 机制。
-          # feeds 依赖 feeds.conf 里的 git 源声明，本地目录无法作为
-          # feed 源；硬塞到 package/feeds/ 再跑 feeds update 会报
-          # "command: I/O error"，install 装不上任何包，最终
-          # "No rule to make target package/xxx/compile"。
-          rm -rf package/luci-app-wloc package/luci-app-wloc-mitm
-
-          # ---- 界面包 ----
+          # ---- 准备界面包目录 ----
           # luci.mk 从 CURDIR 读取 htdocs/ luasrc/ root/，并按目录名
           # 推导包名。本仓库 luci/ 下只有 Makefile，其余资源在根目录，
           # 因此必须逐项复制，否则得到只含 Makefile 的空壳包
           # （能编译能安装，但界面完全空白）。
-          mkdir -p package/luci-app-wloc
-          cp "$GITHUB_WORKSPACE/luci/Makefile" package/luci-app-wloc/
-          cp -r "$GITHUB_WORKSPACE/htdocs"      package/luci-app-wloc/
-          cp -r "$GITHUB_WORKSPACE/luasrc"      package/luci-app-wloc/
-          cp -r "$GITHUB_WORKSPACE/root"        package/luci-app-wloc/
+          STAGE="$RUNNER_TEMP/wloc-feed"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE/luci-app-wloc"
 
-          # ---- 运行时主包 ----
-          mkdir -p package/luci-app-wloc-mitm
-          cp "$GITHUB_WORKSPACE/Makefile" package/luci-app-wloc-mitm/
-          cp "$GITHUB_WORKSPACE/LICENSE"  package/luci-app-wloc-mitm/
-          cp -r "$GITHUB_WORKSPACE/root"  package/luci-app-wloc-mitm/
+          cp "$GITHUB_WORKSPACE/luci/Makefile" "$STAGE/luci-app-wloc/"
+          cp -r "$GITHUB_WORKSPACE/htdocs"      "$STAGE/luci-app-wloc/"
+          cp -r "$GITHUB_WORKSPACE/luasrc"      "$STAGE/luci-app-wloc/"
+          cp -r "$GITHUB_WORKSPACE/root"        "$STAGE/luci-app-wloc/"
+
+          # ---- 准备运行时主包目录 ----
+          mkdir -p "$STAGE/luci-app-wloc-mitm"
+          cp "$GITHUB_WORKSPACE/Makefile" "$STAGE/luci-app-wloc-mitm/"
+          cp "$GITHUB_WORKSPACE/LICENSE"  "$STAGE/luci-app-wloc-mitm/"
+          cp -r "$GITHUB_WORKSPACE/root"  "$STAGE/luci-app-wloc-mitm/"
 
           echo "=== 界面包 ==="
-          ls package/luci-app-wloc/
+          ls "$STAGE/luci-app-wloc/"
           echo "=== 主包 ==="
-          ls package/luci-app-wloc-mitm/
+          ls "$STAGE/luci-app-wloc-mitm/"
 
           # 逐项校验，缺什么直接点名
           for f in \
-            package/luci-app-wloc/Makefile \
-            package/luci-app-wloc/htdocs/luci-static/resources/view/wloc.js \
-            package/luci-app-wloc/htdocs/luci-static/resources/view/wloc.css \
-            package/luci-app-wloc/luasrc/controller/wloc.lua \
-            package/luci-app-wloc/root/usr/share/rpcd/acl.d/luci-app-wloc.json \
-            package/luci-app-wloc/root/usr/share/luci/menu.d/luci-app-wloc.json \
-            package/luci-app-wloc-mitm/Makefile \
-            package/luci-app-wloc-mitm/root/usr/libexec/wloc/wloc_proto.py \
-            package/luci-app-wloc-mitm/root/usr/libexec/wloc/wloc_addon.py \
-            package/luci-app-wloc-mitm/root/usr/bin/wloc-ctl \
-            package/luci-app-wloc-mitm/root/etc/init.d/wloc \
-            package/luci-app-wloc-mitm/root/etc/config/wloc
+            "$STAGE/luci-app-wloc/Makefile" \
+            "$STAGE/luci-app-wloc/htdocs/luci-static/resources/view/wloc.js" \
+            "$STAGE/luci-app-wloc/htdocs/luci-static/resources/view/wloc.css" \
+            "$STAGE/luci-app-wloc/luasrc/controller/wloc.lua" \
+            "$STAGE/luci-app-wloc/root/usr/share/rpcd/acl.d/luci-app-wloc.json" \
+            "$STAGE/luci-app-wloc/root/usr/share/luci/menu.d/luci-app-wloc.json" \
+            "$STAGE/luci-app-wloc-mitm/Makefile" \
+            "$STAGE/luci-app-wloc-mitm/root/usr/libexec/wloc/wloc_proto.py" \
+            "$STAGE/luci-app-wloc-mitm/root/usr/libexec/wloc/wloc_addon.py" \
+            "$STAGE/luci-app-wloc-mitm/root/usr/bin/wloc-ctl" \
+            "$STAGE/luci-app-wloc-mitm/root/etc/init.d/wloc" \
+            "$STAGE/luci-app-wloc-mitm/root/etc/config/wloc"
           do
             [ -f "$f" ] || { echo "::error::缺少 $f"; exit 1; }
           done
           echo "包文件校验通过（12 项）"
 
-      - name: 安装 LuCI 基础依赖
-        run: |
-          set -eu
+          # ---- 注册为本地 feed ----
+          # 用 src-link（而非 src-git）：指向本地目录，不需要 git 源。
+          # 这是 OpenWrt 官方支持的方式。
           cd openwrt
-          # luci-base 必须在编译前就位（界面包 DEPENDS 声明了它）
-          ./scripts/feeds install -y luci-base 2>/dev/null || true
-          test -d feeds/luci || { echo "::error::luci feed 缺失"; exit 1; }
-          ls -d feeds/luci/luci-base >/dev/null 2>&1 \
-            && echo "luci-base 就绪" \
-            || echo "::warning::luci-base 目录未找到，编译可能失败"
+          echo "src-link wloc $STAGE" >> feeds.conf.default
+          ./scripts/feeds update wloc
+          ./scripts/feeds install -y \
+            luci-app-wloc luci-app-wloc-mitm luci-base
+
+          echo "=== 安装结果 ==="
+          ls -d package/feeds/wloc/* 2>/dev/null || {
+            echo "::error::feed 未生效，package/feeds/wloc 为空"
+            ls -la package/feeds/ 2>/dev/null || true
+            exit 1
+          }
 
       - name: 准备构建配置
         run: |
@@ -228,6 +228,32 @@ jobs:
             'CONFIG_BUILD_TESTING=n' > .config
           make defconfig >/dev/null
           echo "配置条目: $(grep -c '^CONFIG_' .config || true)"
+
+      - name: 校验包已被 make 识别
+        run: |
+          set -eu
+          cd openwrt
+          # 关键校验：确认 make 真的把本包纳入了包列表。
+          # 之前多次失败（No rule to make target）都是因为包没被识别，
+          # 而挂载步骤的文件校验全部通过——文件在 ≠ make 认。
+          #
+          # luci.mk 会生成 luci-i18n-* 附属包，这里一并放行。
+          for p in luci-app-wloc luci-app-wloc-mitm; do
+            if grep -q "^CONFIG_PACKAGE_${p}=" .config; then
+              echo "已识别: $(grep "^CONFIG_PACKAGE_${p}=" .config)"
+            else
+              echo "::error::make 未识别 $p"
+              echo "--- .config 中 wloc 条目 ---"
+              grep -i wloc .config || echo "  (完全没有)"
+              echo "--- package/feeds/wloc ---"
+              ls -la package/feeds/wloc/ 2>/dev/null || echo "  目录不存在"
+              echo "--- feeds.conf ---"
+              grep -i wloc feeds.conf.default 2>/dev/null || echo "  feeds.conf 未包含 wloc"
+              echo "--- feeds/wloc ---"
+              ls -la feeds/wloc/ 2>/dev/null || echo "  feeds/wloc 不存在"
+              exit 1
+            fi
+          done
 
       - name: 下载依赖源码
         run: |
@@ -250,6 +276,8 @@ jobs:
         run: |
           set -eu
           cd openwrt
+          # 用包名而非路径做目标，OpenWrt 会自行解析到 package/feeds/wloc/ 下。
+          # 路径形式在 src-link feed 下不稳定（软链解析），包名更可靠。
           make package/luci-app-wloc/compile      V=s -j"$(nproc)"
           make package/luci-app-wloc-mitm/compile V=s -j"$(nproc)"
 
