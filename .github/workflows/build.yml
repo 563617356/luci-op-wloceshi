@@ -226,7 +226,9 @@ jobs:
             'CONFIG_SIGNED_PACKAGES=n' \
             'CONFIG_DEVEL=n' \
             'CONFIG_AUTOREMOVE=n' \
-            'CONFIG_BUILD_TESTING=n' > .config
+            'CONFIG_BUILD_TESTING=n' \
+            'CONFIG_PACKAGE_luci-app-wloc=y' \
+            'CONFIG_PACKAGE_luci-app-wloc-mitm=y' > .config
           make defconfig >/dev/null
           echo "配置条目: $(grep -c '^CONFIG_' .config || true)"
 
@@ -235,23 +237,24 @@ jobs:
           set -eu
           cd openwrt
           # 关键校验：确认 make 真的把本包纳入了包列表。
-          # 之前多次失败（No rule to make target）都是因为包没被识别，
-          # 而挂载步骤的文件校验全部通过——文件在 ≠ make 认。
+          # 前面几轮失败都因为包没被识别，而挂载步骤的文件校验
+          # 全部通过——文件在 ≠ make 认。
           #
-          # luci.mk 会生成 luci-i18n-* 附属包，这里一并放行。
+          # 注意：未被选中时 .config 里是注释行
+          #   # CONFIG_PACKAGE_luci-app-wloc is not set
+          # 因此不能只 grep '^CONFIG_PACKAGE_x='，那样会把
+          # "已识别但未选中"误判成"未识别"。
           for p in luci-app-wloc luci-app-wloc-mitm; do
             if grep -q "^CONFIG_PACKAGE_${p}=" .config; then
-              echo "已识别: $(grep "^CONFIG_PACKAGE_${p}=" .config)"
+              echo "已启用: $(grep "^CONFIG_PACKAGE_${p}=" .config)"
+            elif grep -q "^# CONFIG_PACKAGE_${p} is not set" .config; then
+              echo "已识别但未选中: ${p}"
             else
-              echo "::error::make 未识别 $p"
+              echo "::error::make 完全未识别 $p"
               echo "--- .config 中 wloc 条目 ---"
               grep -i wloc .config || echo "  (完全没有)"
-              echo "--- package/feeds/wloc ---"
-              ls -la package/feeds/wloc/ 2>/dev/null || echo "  目录不存在"
-              echo "--- feeds.conf ---"
-              grep -i wloc feeds.conf.default 2>/dev/null || echo "  feeds.conf 未包含 wloc"
-              echo "--- feeds/wloc ---"
-              ls -la feeds/wloc/ 2>/dev/null || echo "  feeds/wloc 不存在"
+              echo "--- package/ 下的本包 ---"
+              ls -la package/luci-app-wloc package/luci-app-wloc-mitm 2>/dev/null || true
               exit 1
             fi
           done
