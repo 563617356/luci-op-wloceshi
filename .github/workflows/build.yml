@@ -175,11 +175,39 @@ jobs:
           # luci-base 必须在菜单定义之前就位，否则 LuCI 包会缺依赖报错
           ./scripts/feeds install -y luci-base luci-compat 2>/dev/null || true
 
+      - name: 准备构建配置
+        run: |
+          set -eu
+          cd openwrt
+          # make download 依赖 .config 展开包列表；没有 .config 时
+          # 新版 SDK 会遍历全部包而失败。写入最小配置并 defconfig。
+          printf '%s\n' \
+            'CONFIG_ALL_NONSHARED=n' \
+            'CONFIG_ALL_KMODS=n' \
+            'CONFIG_ALL=n' \
+            'CONFIG_SIGNED_PACKAGES=n' \
+            'CONFIG_DEVEL=n' \
+            'CONFIG_AUTOREMOVE=n' \
+            'CONFIG_BUILD_TESTING=n' > .config
+          make defconfig >/dev/null
+          echo "配置条目: $(grep -c '^CONFIG_' .config || true)"
+
       - name: 下载依赖源码
         run: |
           set -eu
           cd openwrt
-          make download -j"$(nproc)"
+          # 只下载编译本包真正需要的依赖，避免全量拉取。
+          # 先尝试整包 download（快路径），失败则退回逐包。
+          if ! make package/luci-app-wloc/download \
+                     package/luci-app-wloc-mitm/download -j"$(nproc)"; then
+            echo "::warning::整包 download 失败，改用全量 download"
+            make download -j"$(nproc)" || {
+              echo "::error::download 失败，日志尾部："
+              ls -la dl/ 2>/dev/null | head -n 20 || true
+              exit 1
+            }
+          fi
+          echo "dl/ 中文件数: $(ls dl/ 2>/dev/null | wc -l)"
 
       - name: 编译
         run: |
@@ -189,22 +217,54 @@ jobs:
           make package/luci-app-wloc-mitm/compile V=s -j"$(nproc)"
 
       - name: 收集产物
+        if: always()
         run: |
-          set -eu
+          set -u
           mkdir -p "$GITHUB_WORKSPACE/artifacts"
           # ipk 与 apk 一并收集，具体格式体现在文件名里
           find openwrt/bin -type f \
             \( -name 'luci-app-wloc_*.ipk' -o -name 'luci-app-wloc_*.apk' \) \
-            -exec cp -v {} "$GITHUB_WORKSPACE/artifacts/" \;
+            -exec cp -v {} "$GITHUB_WORKSPACE/artifacts/" \; 2>/dev/null || true
           echo
-          ls -la "$GITHUB_WORKSPACE/artifacts/"
+          echo "=== 产物 ==="
+          ls -la "$GITHUB_WORKSPACE/artifacts/" 2>/dev/null || echo "  无产物"
+
+      - name: 诊断
+        if: always()
+        run: |
+          set -u
+          cd openwrt 2>/dev/null || exit 0
+          echo "=== OpenWrt 版本 ==="
+          grep -E '^(VERSION_|SUBTARGET|TARGET_ARCHPACKAGE)' include/version.mk 2>/dev/null || true
+          echo
+          echo "=== feeds 状态 ==="
+          for d in feeds/*/; do
+            [ -d "$d/.git" ] && echo "  ok   $d" || echo "  MISS $d"
+          done
+          echo
+          echo "=== 本包是否被 feeds 识别 ==="
+          ls -la package/feeds/wloc/ 2>/dev/null || echo "  package/feeds/wloc 不存在"
+          echo
+          echo "=== dl/ 文件数 ==="
+          ls dl/ 2>/dev/null | wc -l
+          echo
+          echo "=== .config ==="
+          [ -f .config ] && echo "  存在，条目 $(grep -c '^CONFIG_' .config)" || echo "  不存在"
+          echo
+          echo "=== bin/ 产物 ==="
+          find bin -type f \( -name '*.ipk' -o -name '*.apk' \) 2>/dev/null | head -n 10 || echo "  无"
+          echo
+          echo "=== 磁盘 ==="
+          df -h . | tail -n1
 
       - name: 上传 artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: luci-app-wloc-${{ matrix.version }}-${{ matrix.arch }}
           path: artifacts/*
-          if-no-files-found: error
+          # 编译失败时不额外报错，诊断步骤的输出才是关键信息
+          if-no-files-found: ignore
 
   release:
     name: Release
