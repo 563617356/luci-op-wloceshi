@@ -98,8 +98,27 @@ jobs:
         uses: actions/cache@v4
         with:
           path: openwrt
-          # 只按 SDK 坐标做 key——不混入源码 hash，否则改一行代码就重下 1GB SDK
-          key: sdk-${{ matrix.version }}-${{ matrix.arch }}
+          # 只按 SDK 坐标做 key——不混入源码 hash，否则改一行代码就重下 1GB SDK。
+          # v2：旧缓存里 feeds/ 处于 detached HEAD，会让 feeds update 失败，
+          #     改 key 后缀强制重建。
+          key: sdk-v2-${{ matrix.version }}-${{ matrix.arch }}
+
+      - name: 恢复缓存后清理 feeds
+        if: steps.sdk-cache.outputs.cache-hit == 'true'
+        run: |
+          set -eu
+          cd openwrt
+          # SDK 目录里的 feeds/base 是 SDK 自带的 git 仓库，缓存恢复后处于
+          # detached HEAD（"You are not currently on a branch"），
+          # ./scripts/feeds update 对它执行 git pull 会直接失败：
+          #   Updating feed 'base' from '...;v24.10.8' ...
+          #   You are not currently on a branch. ... failed.
+          # 这与网络无关，是缓存的副作用——只有命中缓存的版本会失败。
+          #
+          # 处理：删掉 feeds/ 与索引缓存，feeds update 会重新 clone。
+          # 只影响 update 的网络开销，不影响 SDK 本体。
+          rm -rf feeds tmp/.packageinfo tmp/.config-package.in 2>/dev/null || true
+          echo "feeds 已清理，feeds update 将重新拉取"
 
       - name: 下载并解压 SDK
         if: steps.sdk-cache.outputs.cache-hit != 'true'
@@ -146,9 +165,10 @@ jobs:
         run: |
           set -eu
           cd openwrt
-          # feeds update -a 会 clone 多个远端仓库，CI 网络下偶发中断
-          # （RPC failed / early EOF / HTTP 503），是 flaky 而非确定性故障。
-          # 重试 3 次，每次失败等 20s。
+          # 仍保留重试：feeds update -a 要 clone 多个远端仓库，
+          # CI 网络下偶发中断（RPC failed / HTTP 503）确有可能。
+          # 但 24.10.8 长期失败的真正原因不是网络，而是缓存的 SDK 里
+          # feeds/base 处于 detached HEAD（见上一步骤的清理），已单独处理。
           for attempt in 1 2 3; do
             echo "=== feeds update -a（第 $attempt 次）==="
             if ./scripts/feeds update -a; then
@@ -157,6 +177,12 @@ jobs:
             fi
             if [ "$attempt" = "3" ]; then
               echo "::error::feeds update 连续 3 次失败"
+              # 打印每个 feed 的 git 状态，便于判断是网络还是 detached HEAD
+              for d in feeds/*/; do
+                [ -d "$d/.git" ] || continue
+                printf '%-24s ' "$d"
+                git -C "$d" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?"
+              done
               exit 1
             fi
             echo "第 $attempt 次失败，20 秒后重试…"
