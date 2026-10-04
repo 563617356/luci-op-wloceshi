@@ -52,6 +52,8 @@ define Package/luci-app-wloc-mitm/install
 		$(1)/usr/libexec/wloc/wloc_proto.py
 	$(INSTALL_BIN) ./root/usr/libexec/wloc/wloc_addon.py \
 		$(1)/usr/libexec/wloc/wloc_addon.py
+	$(INSTALL_BIN) ./root/usr/libexec/wloc/wloc_profile.py \
+		$(1)/usr/libexec/wloc/wloc_profile.py
 
 	$(INSTALL_DIR) $(1)/usr/bin
 	$(INSTALL_BIN) ./root/usr/bin/wloc-ctl $(1)/usr/bin/wloc-ctl

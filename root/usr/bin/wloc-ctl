@@ -139,6 +139,36 @@ cmd_ca_export() {
 	cat "$cert"
 }
 
+cmd_profile() {
+	need_root
+
+	local cert=""
+	for c in /etc/wloc/mitmproxy-ca-cert.cer /etc/wloc/mitmproxy-ca-cert.pem; do
+		[ -f "$c" ] && { cert="$c"; break; }
+	done
+	[ -n "$cert" ] || die "CA 证书尚未生成，先执行 wloc-ctl setup"
+
+	HOST="${1:-}"
+	PORT="${2:-$(uci_get listen_port)}"
+	[ -n "$HOST" ] || HOST="$(uci -q get network.lan.ipaddr 2>/dev/null | sed 's|/24||')"
+	[ -n "$HOST" ] || die "请指定路由器地址：wloc-ctl profile <ip> [port]"
+
+	OUT="${3:-/tmp/wloc.mobileconfig}"
+
+	python3 /usr/libexec/wloc/wloc_profile.py \
+		--host "$HOST" --port "$PORT" --cert "$cert" -o "$OUT" \
+		|| die "生成失败"
+
+	echo "已生成: $OUT"
+	echo
+	echo "传到 iPhone 后："
+	echo "  1. 打开文件 → 安装描述文件"
+	echo "  2. 设置 → 通用 → 关于本机 → 证书信任设置 → 开启完全信任"
+	echo "  3. 设置 → VPN → 打开开关"
+	echo
+	echo "若要从 LuCI 下载，可在界面「iPhone 配置」区块点按钮生成。"
+}
+
 cmd_test() {
 	[ -f "$ADDON_DIR/wloc_proto.py" ] || die "addon 文件缺失"
 	python3 -c "
@@ -170,6 +200,7 @@ case "$1" in
 	status)     cmd_status ;;
 	ca)         cmd_ca ;;
 	ca-export)  cmd_ca_export ;;
+	profile)    shift; cmd_profile "$@" ;;
 	test)       cmd_test ;;
 	start)      /etc/init.d/wloc start ;;
 	stop)       /etc/init.d/wloc stop ;;
@@ -185,6 +216,7 @@ case "$1" in
   status      查看服务状态、UCI 配置与统计
   ca          输出 CA 证书路径
   ca-export   输出 CA 证书内容（用于安装到 iPhone）
+  profile [ip] [port]  生成 iOS 描述文件（证书+VPN+代理）
   test        用合成回包自检改包逻辑
   start       启动服务
   stop        停止服务

@@ -499,40 +499,127 @@ return view.extend({
 		]);
 	},
 
-	/* 证书区块 */
+	/*
+	 * iPhone 配置区块。
+	 *
+	 * 首选「一键描述文件」：一个 .mobileconfig 同时含根证书、IKEv2 VPN
+	 * 与代理配置，装上后只需在「设置 → VPN」打开开关，系统自动应用代理，
+	 * 不必手动去 Wi-Fi 设置里填 IP 和端口。
+	 *
+	 * 保留手工代理作为备选：若描述文件装不上（企业 MDM 策略限制等），
+	 * 仍可用只装证书 + 手工填代理的方式。
+	 */
 	renderCert: function (hasCert) {
-		return E('div', { 'class': 'cbi-section' }, [
-			E('h3', {}, [ _('证书与 iPhone 配置') ]),
-			E('div', { 'class': 'cbi-section-descr' },
-				_('iOS 只信任手动安装的根证书，装完还必须开启「完全信任」，否则无效。')),
-			E('div', { 'class': 'cbi-value' }, [
-				E('label', { 'class': 'cbi-value-title' }, [ _('CA 证书') ]),
-				E('div', { 'class': 'cbi-value-field' }, [
-					hasCert
-						? E('a', {
-							'class': 'cbi-button cbi-button-action',
-							'href': L.url('admin', 'services', 'wloc', 'ca'),
-							'target': '_blank'
-						}, [ _('下载 wloc-ca.cer') ])
-						: E('span', { 'class': 'cbi-value-description' },
-							_('尚未生成。请在 SSH 下执行 wloc-ctl setup，或启动一次服务。')),
-					hasCert
-						? E('div', { 'class': 'cbi-value-description', 'style': 'margin-top:6px' },
-							_('iPhone 操作：设置 → 通用 → VPN与设备管理 安装描述文件；' +
-							  '然后 设置 → 通用 → 关于本机 → 证书信任设置，开启完全信任。'))
-						: ''
-				])
-			]),
-			E('div', { 'class': 'cbi-value' }, [
-				E('label', { 'class': 'cbi-value-title' }, [ _('iPhone 代理') ]),
-				E('div', { 'class': 'cbi-value-field' }, [
-					E('div', { 'class': 'cbi-value-description' },
-						_('设置 → 无线局域网 → 点路由器名右侧 ⓘ → 配置代理 → 手动，' +
-						  '服务器填本路由器 IP，端口填下方「监听端口」。')),
-					E('div', { 'class': 'cbi-value-description' },
-						_('仅 Wi-Fi 生效，蜂窝网络会绕过代理。'))
-				])
+		var self = this;
+
+		/* 路由器地址：默认填当前访问 LuCI 的主机名 */
+		var hostInput = E('input', {
+			'class': 'cbi-input-text',
+			'type': 'text',
+			'id': 'wloc_vpn_host',
+			'value': (location.hostname || '192.168.1.1')
+		});
+		var portInput = E('input', {
+			'class': 'cbi-input-text',
+			'type': 'number',
+			'id': 'wloc_vpn_port',
+			'value': uci.get('wloc', 'main', 'listen_port') || '8080'
+		});
+		var alwaysInput = E('input', {
+			'type': 'checkbox',
+			'id': 'wloc_vpn_always'
+		});
+
+		function profileUrl() {
+			var q = '?host=' + encodeURIComponent(hostInput.value.trim())
+				+ '&port=' + encodeURIComponent(portInput.value.trim());
+			if (alwaysInput.checked) q += '&always=1';
+			return L.url('admin', 'services', 'wloc', 'profile') + q;
+		}
+
+		var dlBtn = E('button', {
+			'class': 'cbi-button cbi-button-action',
+			'id': 'wloc_dl_profile'
+		}, [ _('生成并下载描述文件') ]);
+
+		dlBtn.addEventListener('click', function () {
+			var h = hostInput.value.trim();
+			if (!h) {
+				ui.addNotification(null, E('p', [
+					_('请填写本路由器的 IP 或域名（iPhone 用来连接代理的那台）')
+				]), 'error');
+				return;
+			}
+			/* 触发浏览器下载 */
+			var a = E('a', { 'href': profileUrl(), 'download': 'wloc.mobileconfig' });
+			document.body.appendChild(a);
+			a.click();
+			document.body.removeChild(a);
+		});
+
+		/* 端口与 UCI 联动，避免用户填错 */
+		portInput.addEventListener('change', function () {
+			var v = portInput.value.trim();
+			if (v) {
+				uci.set('wloc', 'main', 'listen_port', v);
+				uci.save();
+			}
+		});
+
+		var profileBox = E('div', { 'class': 'cbi-value' }, [
+			E('label', { 'class': 'cbi-value-title' }, [ _('一键配置（推荐）') ]),
+			E('div', { 'class': 'cbi-value-field' }, [
+				hasCert
+					? E('div', {}, [
+						E('label', {}, [ _('路由器地址') ]),
+						hostInput,
+						E('label', { 'style': 'margin-top:8px' }, [ _('代理端口') ]),
+						portInput,
+						E('label', {
+							'style': 'display:flex;align-items:center;gap:6px;margin-top:8px'
+						}, [ alwaysInput, E('span', {}, [ _('始终打开 VPN') ]) ]),
+						E('div', { 'style': 'margin-top:8px' }, [ dlBtn ]),
+						E('div', { 'class': 'cbi-value-description', 'style': 'margin-top:8px' },
+							_('描述文件内含根证书、VPN 与代理配置。安装后到「设置 → VPN」' +
+							  '打开开关即可生效，无需再手动填写代理地址。'))
+					])
+					: E('span', { 'class': 'cbi-value-description' },
+						_('尚未生成 CA 证书。请在 SSH 下执行 wloc-ctl setup 安装 mitmproxy。')),
+				hasCert
+					? E('div', { 'class': 'cbi-value-description', 'style': 'margin-top:8px' },
+						_('iPhone 侧步骤：把文件隔空投送到手机 → 打开 → 安装描述文件；' +
+						  '然后到 设置 → 通用 → 关于本机 → 证书信任设置，' +
+						  '对已安装的根证书开启「完全信任」；' +
+						  '最后 设置 → VPN 打开开关。'))
+					: ''
 			])
+		]);
+
+		var manualBox = E('div', { 'class': 'cbi-value' }, [
+			E('label', { 'class': 'cbi-value-title' }, [ _('备选：手工配置') ]),
+			E('div', { 'class': 'cbi-value-field' }, [
+				hasCert
+					? E('a', {
+						'class': 'cbi-button cbi-button-secondary',
+						'href': L.url('admin', 'services', 'wloc', 'ca'),
+						'target': '_blank'
+					}, [ _('仅下载 CA 证书') ])
+					: E('span', { 'class': 'cbi-value-description' }, [ _('证书未生成') ]),
+				E('div', { 'class': 'cbi-value-description', 'style': 'margin-top:6px' },
+					_('只装证书后，到 设置 → 无线局域网 → 点路由器名右侧 ⓘ → ' +
+					  '配置代理 → 手动，填路由器 IP 与端口。' +
+					  '此方式仅 Wi-Fi 生效，蜂窝网络会绕过。')),
+				alwaysInput.checked = false
+			])
+		]);
+
+		return E('div', { 'class': 'cbi-section' }, [
+			E('h3', {}, [ _('iPhone 配置') ]),
+			E('div', { 'class': 'cbi-section-descr' },
+				_('iOS 只信任手动安装的根证书，且必须开启「完全信任」。' +
+				  '描述文件已把证书与代理配置打包，可一次装好。')),
+			profileBox,
+			manualBox
 		]);
 	},
 

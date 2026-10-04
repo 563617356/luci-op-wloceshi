@@ -143,16 +143,18 @@ class Stats(object):
         self.wifi = 0
         self.cell = 0
         self.skipped = 0
+        self.dropped = 0
 
     def snapshot(self):
-        return (self.locations, self.wifi, self.cell, self.skipped)
+        return (self.locations, self.wifi, self.cell, self.skipped, self.dropped)
 
     def restore(self, snap):
-        self.locations, self.wifi, self.cell, self.skipped = snap
+        (self.locations, self.wifi, self.cell,
+         self.skipped, self.dropped) = snap
 
     def delta_since(self, snap):
         now = self.snapshot()
-        return ((now[0] - snap[0]) + (now[1] - snap[1]) + (now[2] - snap[2]))
+        return sum(now[i] - snap[i] for i in range(3))
 
     def as_dict(self):
         return {
@@ -160,14 +162,28 @@ class Stats(object):
             "wifi": self.wifi,
             "cell": self.cell,
             "skipped": self.skipped,
+            "dropped": self.dropped,
         }
 
 
-def patch_position(buf, lat, lon, accuracy, stats):
+# WLoc8（OpenHRTT/wloc）在改写坐标时还会填这几个固定值，
+# 源码注释写明用意是"主动填满可选定位字段，减少上游对缺失字段的异常判断"。
+# 缺了它们可能导致系统走异常分支，定位不生效或行为不一致。
+_EXTRA_LOCATION_FIELDS = (
+    (4, 3),      # unknownValue4
+    (10, 63),    # motionActivityType
+    (11, 467),   # motionActivityConfidence
+)
+
+
+def patch_position(buf, lat, lon, accuracy, stats, fill_extra=True):
     """改写单个定位条目：field 1=纬度 field 2=经度 field 3=精度(米)。
 
     三个字段都是 varint 定点数，前置放大 1e8。
     仅当 field 1 与 field 2 同时存在才动手，避免误改非定位结构。
+
+    fill_extra=True 时额外写入 _EXTRA_LOCATION_FIELDS 里的固定值，
+    对齐 WLoc8 的行为；已存在的同号字段会被覆盖。
     """
     fields = parse_fields(buf)
     has_lat = has_lon = False
@@ -179,6 +195,16 @@ def patch_position(buf, lat, lon, accuracy, stats):
     if not (has_lat and has_lon):
         return buf
 
+    extra = dict(_EXTRA_LOCATION_FIELDS) if fill_extra else {}
+
+    # 已存在的补充字段号：只在原条目确实带有时才覆盖，
+    # 否则不追加——否则每次改写都会让 payload 变长，
+    # 且"目标坐标等于原值"时也无法再被识别为无需改动。
+    present = set()
+    for field_no, wire_type, _value, _raw in fields:
+        if wire_type == WIRE_VARINT:
+            present.add(field_no)
+
     out = bytearray()
     for field_no, wire_type, _value, raw in fields:
         if field_no == 1 and wire_type == WIRE_VARINT:
@@ -187,8 +213,12 @@ def patch_position(buf, lat, lon, accuracy, stats):
             out += encode_field(2, WIRE_VARINT, round(1e8 * lon))
         elif field_no == 3 and wire_type == WIRE_VARINT:
             out += encode_field(3, WIRE_VARINT, accuracy)
+        elif (fill_extra and field_no in extra
+              and wire_type == WIRE_VARINT and field_no in present):
+            out += encode_field(field_no, WIRE_VARINT, extra[field_no])
         else:
             out += raw
+
     stats.locations += 1
     return bytes(out)
 
@@ -270,11 +300,30 @@ def patch_cell(buf, lat, lon, accuracy, stats):
     return bytes(out)
 
 
-def patch_payload(buf, lat, lon, accuracy, stats):
-    """顶层分派：field 2 = WiFi 列表，field 22 / 24 = 基站列表。"""
+# 顶层计数/类型字段的置空。
+#
+# WLoc8（OpenHRTT/wloc）在 mutateResponseBody 里对
+# numCellResults / numWifiResults / deviceType 三个字段做了 = nil。
+#
+# 但本项目不启用它：字段号无法从公开信息确证（其 .proto 未开源，
+# 我逆向的字段表里 field 7 是有实际内容的字段，猜测置空会破坏数据）。
+# 贸然丢弃比不丢弃风险更高。保持 _DROP_TOP_FIELDS 为空，
+# 待抓包确认字段号后再启用。
+_DROP_TOP_FIELDS = frozenset()
+
+
+def patch_payload(buf, lat, lon, accuracy, stats, drop_fields=True):
+    """顶层分派：field 2 = WiFi 列表，field 22 / 24 = 基站列表。
+
+    drop_fields 参数保留给后续启用 _DROP_TOP_FIELDS 的情况；
+    当前该集合为空，对输出无影响。
+    """
     fields = parse_fields(buf)
     out = bytearray()
     for field_no, wire_type, value, raw in fields:
+        if drop_fields and field_no in _DROP_TOP_FIELDS:
+            stats.dropped += 1
+            continue
         if wire_type == WIRE_BYTES and field_no == 2:
             out += encode_field(2, WIRE_BYTES, patch_wifi_cell(value, lat, lon, accuracy, stats))
         elif wire_type == WIRE_BYTES and field_no in (22, 24):

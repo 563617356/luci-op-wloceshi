@@ -37,6 +37,9 @@ jobs:
       - name: addon 集成测试
         run: python3 tests/test_wloc_addon.py
 
+      - name: 描述文件生成测试
+        run: python3 tests/test_wloc_profile.py
+
       - name: 地图适配层测试
         run: node tests/test_map_adapter.js
 
@@ -234,13 +237,14 @@ jobs:
             package/luci-app-wloc-mitm/Makefile \
             package/luci-app-wloc-mitm/root/usr/libexec/wloc/wloc_proto.py \
             package/luci-app-wloc-mitm/root/usr/libexec/wloc/wloc_addon.py \
+            package/luci-app-wloc-mitm/root/usr/libexec/wloc/wloc_profile.py \
             package/luci-app-wloc-mitm/root/usr/bin/wloc-ctl \
             package/luci-app-wloc-mitm/root/etc/init.d/wloc \
             package/luci-app-wloc-mitm/root/etc/config/wloc
           do
             [ -f "$f" ] || { echo "::error::缺少 $f"; exit 1; }
           done
-          echo "包文件校验通过（13 项）"
+          echo "包文件校验通过（14 项）"
 
       - name: 安装 LuCI 基础依赖
         run: |

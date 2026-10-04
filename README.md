@@ -157,18 +157,39 @@ wloc-ctl setup
 
 此步会下载并安装 mitmproxy，耗时较长。完成后 CA 证书位于 `/etc/wloc/`。
 
-### 5. iPhone 配置
+### 5. iPhone 配置（一键描述文件，推荐）
 
-1. **安装 CA 证书**
-   在 LuCI 界面「证书与 iPhone 配置」区块下载 `wloc-ca.cer`，
-   发送到 iPhone（隔空投送 / 邮件 / 微信文件传输）。
-   - 设置 → 通用 → VPN与设备管理 → 安装描述文件
-   - 设置 → 通用 → 关于本机 → **证书信任设置** → 开启该证书的**完全信任**
+LuCI 界面「iPhone 配置」区块：
 
-2. **设置代理**
-   - 设置 → 无线局域网 → 点路由器名右侧 ⓘ → 配置代理 → **手动**
-   - 服务器：路由器 IP（如 `192.168.1.1`）
-   - 端口：与 LuCI 中「监听端口」一致（默认 `8080`）
+1. 填**路由器地址**（iPhone 能访问到的那台，默认取当前 LuCI 主机名）与**代理端口**
+2. 点「生成并下载描述文件」，得到 `wloc.mobileconfig`
+3. 隔空投送 / 邮件发到 iPhone，打开后点「安装」
+4. **设置 → 通用 → 关于本机 → 证书信任设置**，对已安装的根证书开启**完全信任**
+5. **设置 → VPN**，打开开关 —— 代理配置由系统自动应用，**不必再手填地址**
+
+描述文件（`.mobileconfig`）内含三个部分：
+
+| 内容 | 作用 |
+|---|---|
+| 根证书 `com.apple.security.root` | 让 iOS 信任路由器 mitmproxy 的 CA |
+| VPN `com.apple.vpn.managed` | IKEv2 配置，附带 `Proxies` 字典 |
+| 代理 `Proxies.ProxyMatchDomains` | **只对 `gs-loc.apple.com` 生效**，其余流量直连 |
+
+`ProxyMatchDomains` 是关键：它让代理只作用于定位域名，
+其它流量不绕路由器，也就没有额外性能与耗电开销。
+
+命令行等价操作：
+
+```sh
+wloc-ctl profile 192.168.1.1 8080
+# 生成 /tmp/wloc.mobileconfig
+```
+
+**备选：手工配置**（描述文件装不上时）
+
+只下载 CA 证书，然后到 设置 → 无线局域网 → 路由器名右侧 ⓘ →
+配置代理 → 手动，填路由器 IP 与端口。此方式**仅 Wi-Fi 生效**，
+蜂窝网络会绕过代理。
 
 3. **启用改写**
    在 LuCI 界面「基本设置」中打开「启用坐标改写」，用地图选点或手填坐标，保存应用。
@@ -190,6 +211,7 @@ wloc-ctl setup       安装 mitmproxy 并生成 CA 证书
 wloc-ctl status      查看服务状态、UCI 配置与统计
 wloc-ctl ca          输出 CA 证书路径
 wloc-ctl ca-export   输出 CA 证书内容
+wloc-ctl profile [ip] [port]  生成 iOS 描述文件（证书+VPN+代理）
 wloc-ctl test        用合成回包自检改包逻辑
 wloc-ctl start|stop|restart|reload
 wloc-ctl enable|disable
@@ -218,6 +240,12 @@ uci commit wloc
 - **仅 Wi-Fi 生效。** iPhone 使用蜂窝数据时不经过路由器代理。
 - **需要上游连通性。** 路由器必须能访问 `gs-loc.apple.com`，
   否则 mitmproxy 无法转发真实响应（不会伪造回包）。
+- **蜂窝网络需手动开启 VPN。** 描述文件里的 VPN 配置默认不设「始终打开」，
+  需在 设置 → VPN 手动打开。勾选「始终打开」可让蜂窝也自动生效，
+  但此时**所有流量**都会走隧道。
+- **IKEv2 服务端未内置。** 描述文件只配置 iPhone 端；
+  若要让系统层面的 VPN 真正连通，需另行部署 IKEv2 服务端
+  （如 strongSwan）。不部署时，描述文件仍可用于「只装证书 + 系统自动应用代理」。
 
 ---
 
@@ -247,6 +275,7 @@ uci commit wloc
 ```sh
 python3 tests/test_wloc_proto.py    # protobuf 引擎（59 项）
 python3 tests/test_wloc_addon.py    # addon 集成（24 项）
+python3 tests/test_wloc_profile.py   # 描述文件生成（43 项）
 node    tests/test_map_adapter.js   # 地图适配层（31 项）
 node    tests/test_link_parser.js   # 地图链接解析（65 项）
 ```
@@ -294,6 +323,7 @@ luci-app-wloc/
 ## 致谢
 
 - [Yu9191/wloc](https://github.com/Yu9191/wloc) — 原始 WLOC 定位修改思路，MIT
+- [OpenHRTT/wloc](https://github.com/OpenHRTT/wloc) — WLoc8，Packet Tunnel 方案参考
 - [NSNanoCat/Util](https://github.com/NSNanoCat/util) — 跨平台脚本工具框架
 
 ## 许可

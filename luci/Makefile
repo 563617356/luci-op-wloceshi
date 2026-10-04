@@ -76,6 +76,11 @@ define Package/luci-app-wloc/install
 	# ---- UCI 配置（主包也会装同一份，此处保证单独安装界面包时可用）----
 	$(INSTALL_DIR) $(1)/etc/config
 	$(INSTALL_CONF) ./root/etc/config/wloc $(1)/etc/config/wloc
+
+	# 描述文件生成器：界面包的 profile 端点会调用它
+	$(INSTALL_DIR) $(1)/usr/libexec/wloc
+	$(INSTALL_BIN) ./root/usr/libexec/wloc/wloc_profile.py \
+		$(1)/usr/libexec/wloc/wloc_profile.py
 endef
 
 define Package/luci-app-wloc/postinst
