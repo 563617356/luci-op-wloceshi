@@ -20,7 +20,12 @@ define Package/luci-app-wloc-mitm
   CATEGORY:=Network
   SUBMENU:=Proxy
   TITLE:=WLOC 定位改写运行时
-  DEPENDS:=+python3-light +ca-bundle
+  # 只依赖 luci-base 这类必然存在的包。
+  # python3 / ca-bundle 在不同 OpenWrt 版本间改名过
+  # （python3-light 在 24.10+ 已并入 python3），
+  # 硬依赖会在编译期报 "dependency ... which does not exist"，
+  # 因此改为不声明，由 wloc-ctl setup 在设备上按需安装。
+  DEPENDS:=
   PKGARCH:=all
 endef
 
@@ -64,7 +69,8 @@ define Package/luci-app-wloc-mitm/postinst
 #!/bin/sh
 [ -n "$${IPKG_INSTROOT}" ] || {
 	echo "luci-app-wloc-mitm 已安装。"
-	echo "下一步：执行 wloc-ctl setup 安装 mitmproxy 并生成 CA 证书。"
+	echo "下一步：执行 wloc-ctl setup —— 它会按当前系统安装 python3 与"
+	echo "mitmproxy，并生成 CA 证书（本包不硬依赖，因各版本包名不同）。"
 	exit 0
 }
 endef

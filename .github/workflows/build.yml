@@ -148,32 +148,47 @@ jobs:
           cd openwrt
           ./scripts/feeds update -a
 
-      - name: 接入本仓库为 feed
+      - name: 接入本仓库为内置包
         run: |
           set -eu
           cd openwrt
-          rm -rf package/feeds/wloc
-          mkdir -p package/feeds/wloc
 
-          # LuCI 界面包：luci.mk 会按目录名推导包名，
-          # 因此目录必须叫 luci-app-wloc
-          cp -r "$GITHUB_WORKSPACE/luci" package/feeds/wloc/luci-app-wloc
+          # 必须放进 package/（SDK 内置包路径），不能用 feeds 机制。
+          # feeds 依赖 feeds.conf 里的 git 源声明 + ./scripts/feeds update <name>，
+          # 本地目录无法作为 feed 源；硬塞到 package/feeds/ 会导致
+          # "feeds update: command: I/O error"，进而 install 装不上，
+          # 最终报 "No rule to make target package/xxx/compile"。
+          rm -rf package/luci-app-wloc package/luci-app-wloc-mitm
+
+          # LuCI 界面包：luci.mk 用目录名推导包名，目录必须叫 luci-app-wloc
+          cp -r "$GITHUB_WORKSPACE/luci" package/luci-app-wloc
 
           # 运行时主包
-          mkdir -p package/feeds/wloc/luci-app-wloc-mitm
-          cp "$GITHUB_WORKSPACE/Makefile"  package/feeds/wloc/luci-app-wloc-mitm/
-          cp "$GITHUB_WORKSPACE/LICENSE"  package/feeds/wloc/luci-app-wloc-mitm/
-          cp -r "$GITHUB_WORKSPACE/root"   package/feeds/wloc/luci-app-wloc-mitm/
+          mkdir -p package/luci-app-wloc-mitm
+          cp "$GITHUB_WORKSPACE/Makefile" package/luci-app-wloc-mitm/
+          cp "$GITHUB_WORKSPACE/LICENSE" package/luci-app-wloc-mitm/
+          cp -r "$GITHUB_WORKSPACE/root"  package/luci-app-wloc-mitm/
 
-          ./scripts/feeds update wloc
-          ./scripts/feeds install -a -p wloc
+          echo "=== 已放置的包 ==="
+          ls -d package/luci-app-wloc package/luci-app-wloc-mitm
+          test -f package/luci-app-wloc/Makefile     || { echo "::error::界面包缺少 Makefile"; exit 1; }
+          test -f package/luci-app-wloc-mitm/Makefile || { echo "::error::主包缺少 Makefile"; exit 1; }
+          test -f package/luci-app-wloc/htdocs/luci-static/resources/view/wloc.js \
+            || { echo "::error::界面包缺少 wloc.js"; exit 1; }
+          test -f package/luci-app-wloc-mitm/root/usr/libexec/wloc/wloc_proto.py \
+            || { echo "::error::主包缺少 wloc_proto.py"; exit 1; }
+          echo "包文件校验通过"
 
       - name: 安装 LuCI 基础依赖
         run: |
           set -eu
           cd openwrt
-          # luci-base 必须在菜单定义之前就位，否则 LuCI 包会缺依赖报错
-          ./scripts/feeds install -y luci-base luci-compat 2>/dev/null || true
+          # luci-base 必须在编译前就位（界面包 DEPENDS 声明了它）
+          ./scripts/feeds install -y luci-base 2>/dev/null || true
+          test -d feeds/luci || { echo "::error::luci feed 缺失"; exit 1; }
+          ls -d feeds/luci/luci-base >/dev/null 2>&1 \
+            && echo "luci-base 就绪" \
+            || echo "::warning::luci-base 目录未找到，编译可能失败"
 
       - name: 准备构建配置
         run: |
