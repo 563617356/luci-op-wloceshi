@@ -1,0 +1,20 @@
+__pycache__/
+*.pyc
+*.pyo
+*.swp
+*~
+.DS_Store
+
+# OpenWrt SDK / build output
+#
+# 注意：这些路径必须用前导 / 锚定到仓库根目录。
+# 若写成 "bin/" 会匹配任意层级的 bin 目录，
+# 导致 root/usr/bin/wloc-ctl 被误忽略、打不进包里。
+/openwrt/
+/dl/
+/bin/
+/build_dir/
+/staging_dir/
+/tmp/
+*.ipk
+*.apk

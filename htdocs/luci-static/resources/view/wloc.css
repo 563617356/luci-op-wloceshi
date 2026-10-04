@@ -1,0 +1,20 @@
+/* luci-app-wloc 补充样式 */
+
+.wloc-table-wrap {
+	overflow-x: auto;
+}
+
+#wloc_map {
+	background: #f5f5f5;
+	border: 1px solid #d4d4d4;
+}
+
+/* 表格里的数值列不要换行，便于对照查看 */
+.cbi-map .table .td.left {
+	word-break: keep-all;
+}
+
+.cbi-map .table .td strong {
+	font-weight: 500;
+	color: #666;
+}

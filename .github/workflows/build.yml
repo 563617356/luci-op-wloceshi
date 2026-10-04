@@ -1,0 +1,198 @@
+name: Build
+
+on:
+  push:
+    branches: [ main, master ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      release:
+        description: '创建 Release 并上传 ipk/apk'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: protobuf 引擎测试
+        run: python3 tests/test_wloc_proto.py
+
+      - name: addon 集成测试
+        run: python3 tests/test_wloc_addon.py
+
+      - name: 地图适配层测试
+        run: node tests/test_map_adapter.js
+
+      - name: 地图链接解析测试
+        run: node tests/test_link_parser.js
+
+  build:
+    name: ${{ matrix.version }} ${{ matrix.arch }}
+    needs: test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 24.10+ 使用 apk 生成 .apk；23.05 及更早使用 opkg 生成 .ipk
+          - version: '25.12.5'
+            arch: x86-64
+            sdk_arch: x86_64
+            sdk_subtarget: x86/64
+          - version: '25.12.5'
+            arch: aarch64-generic
+            sdk_arch: aarch64_generic
+            sdk_subtarget: armsr/armv8
+          - version: '25.12.5'
+            arch: armsr-armv8
+            sdk_arch: armsr_armv8
+            sdk_subtarget: armsr/armv8
+          - version: '24.10.8'
+            arch: x86-64
+            sdk_arch: x86_64
+            sdk_subtarget: x86/64
+          - version: '24.10.8'
+            arch: aarch64-generic
+            sdk_arch: aarch64_generic
+            sdk_subtarget: armsr/armv8
+          - version: '23.05.6'
+            arch: x86-64
+            sdk_arch: x86_64
+            sdk_subtarget: x86/64
+          - version: '23.05.6'
+            arch: aarch64-generic
+            sdk_arch: aarch64_generic
+            sdk_subtarget: armsr/armv8
+          - version: '22.03.7'
+            arch: x86-64
+            sdk_arch: x86_64
+            sdk_subtarget: x86/64
+          - version: '22.03.7'
+            arch: aarch64-generic
+            sdk_arch: aarch64_generic
+            sdk_subtarget: armsr/armv8
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 缓存 SDK
+        id: sdk-cache
+        uses: actions/cache@v4
+        with:
+          path: openwrt
+          key: sdk-${{ matrix.version }}-${{ matrix.sdk_arch }}
+
+      - name: 下载并解压 SDK
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        env:
+          SDK_VERSION: ${{ matrix.version }}
+          SDK_SUBTARGET: ${{ matrix.sdk_subtarget }}
+          SDK_ARCH: ${{ matrix.sdk_arch }}
+        run: |
+          set -eu
+          URL="https://downloads.openwrt.org/releases/${SDK_VERSION}/targets/${SDK_SUBTARGET}/${SDK_ARCH}/openwrt-sdk-${SDK_VERSION}-${SDK_ARCH}-musl.tar.xz"
+          echo "下载 $URL"
+          curl -fsSL --retry 3 -o sdk.tar.xz "$URL"
+          mkdir -p openwrt
+          tar -xJf sdk.tar.xz -C openwrt --strip-components=1
+          rm -f sdk.tar.xz
+
+      - name: 更新 feeds
+        run: |
+          set -eu
+          cd openwrt
+          ./scripts/feeds update -a
+
+      - name: 接入本仓库为 feed
+        run: |
+          set -eu
+          cd openwrt
+          rm -rf package/feeds/wloc
+          mkdir -p package/feeds/wloc
+
+          # LuCI 界面包：luci.mk 会按目录名推导包名，
+          # 因此目录必须叫 luci-app-wloc
+          cp -r "$GITHUB_WORKSPACE/luci" package/feeds/wloc/luci-app-wloc
+
+          # 运行时主包
+          mkdir -p package/feeds/wloc/luci-app-wloc-mitm
+          cp "$GITHUB_WORKSPACE/Makefile"  package/feeds/wloc/luci-app-wloc-mitm/
+          cp "$GITHUB_WORKSPACE/LICENSE"  package/feeds/wloc/luci-app-wloc-mitm/
+          cp -r "$GITHUB_WORKSPACE/root"   package/feeds/wloc/luci-app-wloc-mitm/
+
+          ./scripts/feeds update wloc
+          ./scripts/feeds install -a -p wloc
+
+      - name: 安装 LuCI 基础依赖
+        run: |
+          set -eu
+          cd openwrt
+          # luci-base 必须在菜单定义之前就位，否则 LuCI 包会缺依赖报错
+          ./scripts/feeds install -y luci-base luci-compat 2>/dev/null || true
+
+      - name: 下载依赖源码
+        run: |
+          set -eu
+          cd openwrt
+          make download -j"$(nproc)"
+
+      - name: 编译
+        run: |
+          set -eu
+          cd openwrt
+          make package/luci-app-wloc/compile      V=s -j"$(nproc)"
+          make package/luci-app-wloc-mitm/compile V=s -j"$(nproc)"
+
+      - name: 收集产物
+        run: |
+          set -eu
+          mkdir -p "$GITHUB_WORKSPACE/artifacts"
+          # ipk 与 apk 一并收集，具体格式体现在文件名里
+          find openwrt/bin -type f \
+            \( -name 'luci-app-wloc_*.ipk' -o -name 'luci-app-wloc_*.apk' \) \
+            -exec cp -v {} "$GITHUB_WORKSPACE/artifacts/" \;
+          echo
+          ls -la "$GITHUB_WORKSPACE/artifacts/"
+
+      - name: 上传 artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: luci-app-wloc-${{ matrix.version }}-${{ matrix.arch }}
+          path: artifacts/*
+          if-no-files-found: error
+
+  release:
+    name: Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || inputs.release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: 列出产物
+        run: ls -la artifacts/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true

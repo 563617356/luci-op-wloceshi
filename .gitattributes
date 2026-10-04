@@ -1,0 +1,25 @@
+# 默认按文本处理，显式禁止 CRLF 转换。
+# OpenWrt 上的脚本（init.d / wloc-ctl）带 CRLF 会导致
+# "bad interpreter: /bin/sh^M" 而无法执行，必须保持 LF。
+* text=auto eol=lf
+
+# 二进制文件不做换行转换
+*.apk binary
+*.ipk binary
+*.png binary
+*.jpg binary
+*.gz binary
+
+# 显式声明（双保险）
+*.sh text eol=lf
+*.py text eol=lf
+*.js text eol=lf
+*.json text eol=lf
+*.lua text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.htm text eol=lf
+*.css text eol=lf
+Makefile text eol=lf
+LICENSE text eol=lf
+README.md text eol=lf

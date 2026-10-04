@@ -1,0 +1,26 @@
+config wloc 'main'
+	# 是否启用坐标改写。设为 0 则完全透传，系统恢复真实定位。
+	option enabled '0'
+
+	# 目标坐标（WGS-84）。留空或与默认值相同都视为透传。
+	option longitude '113.94114'
+	option latitude '22.544577'
+
+	# 精度半径（米）
+	option accuracy '25'
+
+	# 日志级别: off / error / warn / info / debug / all
+	option log_level 'info'
+
+	# mitmproxy 监听端口（iPhone 的 Wi-Fi 代理端口填这个）
+	option listen_port '8080'
+
+	# 监听地址。默认只在 LAN 上开放，不要改成 0.0.0.0 暴露到 WAN。
+	option listen_addr '0.0.0.0'
+
+	# 地图选点用的底图：tencent（腾讯，免配置）/ amap（高德，需自备 key）
+	option map_provider 'tencent'
+
+	# 高德地图 Web 端(JS API) key。map_provider=amap 时必填。
+	# 申请入口：https://lbs.amap.com/api/webservice/guide/api-key
+	option amap_key ''

@@ -1,0 +1,14 @@
+{
+	"luci-app-wloc": {
+		"description": "Grant access to WLOC location spoofing configuration",
+		"read": {
+			"uci": [ "wloc" ],
+			"file": {
+				"/var/run/wloc/stats.json": [ "read" ]
+			}
+		},
+		"write": {
+			"uci": [ "wloc" ]
+		}
+	}
+}

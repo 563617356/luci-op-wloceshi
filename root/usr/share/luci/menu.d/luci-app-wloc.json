@@ -1,0 +1,13 @@
+{
+	"admin/services/wloc": {
+		"title": "WLOC 定位改写",
+		"order": 60,
+		"action": {
+			"type": "view",
+			"path": "wloc"
+		},
+		"depends": {
+			"acl": [ "luci-app-wloc" ]
+		}
+	}
+}
